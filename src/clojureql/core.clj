@@ -9,14 +9,15 @@
   (:refer-clojure
    :exclude [take drop sort distinct conj! disj! compile case])
   (:use
-   [clojureql internal predicates]
-   [clojure.string :only [join upper-case] :rename {join join-str}]
-   [clojure.contrib sql [core :only [-?> -?>>]]]
-   [clojure.contrib.sql.internal :as sqlint]
-   [clojure.walk :only (postwalk-replace)]))
+    [clojureql internal predicates]
+    [clojure.string :only [join upper-case] :rename {join join-str}]
+    [clojure.java.jdbc :only [delete-rows]]
+    [clojure.java.jdbc.internal :as jdbcint]
+    [clojure.core.incubator :only [-?> -?>>]]
+    [clojure.walk :only (postwalk-replace)]))
 
                                         ; GLOBALS
-(def *debug* false)
+(def ^{:dynamic true} *debug* false)
 
 (declare table?)
 (declare table)
@@ -94,6 +95,18 @@
     "Confines the query to rows for which the predicate is true
 
      Ex. (select (table :users) (where (= :id 5)))")
+
+  (select-if  [this test predicate]
+              [this test predicate else]
+    "Evaluates test. If logical true, confines the query to rows for which
+     the predicate is true. Optionally accepts a predicate to confine the
+     query if the test is logical false.
+
+     Ex. (select-if (table :users)
+                    (nil? s)
+                      (where (= :email \"default@website.com\"))
+                      (where (= :email s))")
+
   (project    [this fields]
     "Confines the query to the fieldlist supplied in fields
 
@@ -152,9 +165,18 @@
 
      Ex. (disj! (table :one) (where (= :age 22)))")
 
-  (update-in! [this pred records]
-    "Inserts or updates record(s) where pred is true. Accepts records
-     as both maps and collections.
+  (update! [this pred record]
+    "Updates a record where pred is true. Record
+     is a map from strings or keywords (identifying columns)
+     to updated values.
+
+     Ex. (update! (table :one) (where (= :id 5))
+            {:age 22})")
+
+  (update-in! [this pred record]
+    "Inserts or updates a record where pred is true. Record
+     is a map from strings or keywords (identifying columns)
+     to updated values.
 
      Ex. (update-in! (table :one) (where (= :id 5))
             {:age 22})")
@@ -194,7 +216,8 @@
                    combinations having transform]
   clojure.lang.IDeref
   (deref [this]
-    (apply-on this doall))
+    ;; we might not get a sequence, if transform is set
+    (apply-on this #(if (seq? %) (doall %) %)))
 
   Relation
   (apply-on [this f]
@@ -218,6 +241,12 @@
       (assoc this :restriction
              (->> (qualify-predicate this clause)
                   (fuse-predicates (or restriction (predicate nil nil)))))))
+
+  (select-if [this test clause]
+    (if test (select this clause) this))
+
+  (select-if [this test clause else]
+    (if test (select this clause) (select this else)))
 
   (project [this fields]
     (assoc this :tcols fields))
@@ -323,18 +352,25 @@
        (delete-rows tname (into [(str predicate)] (:env predicate))))
     this)
 
-  (update-in! [this pred records]
+  (update-in! [this pred record]
     (let [predicate (into [(str pred)] (:env pred))
           retr      (with-cnx cnx
                       (when *debug* (prn predicate))
-                      (if (map? records)
-                        (update-or-insert-vals tname predicate records)
-                        (apply update-or-insert-vals tname predicate records)))]
+                      (update-or-insert-vals tname predicate record))]
+      (with-meta this (meta retr))))
+
+  (update! [this pred record]
+    (let [predicate (into [(str pred)] (:env pred))
+          retr      (with-cnx cnx
+                      (when *debug* (prn predicate))
+                      (update-vals tname predicate record))]
       (with-meta this (meta retr))))
 
   (grouped [this field]
     ;TODO: We shouldn't call to-fieldlist here, first in the compiler
-    (let [colname (with-meta [(to-fieldlist tname field)] {:prepend true})]
+    (let [colname (with-meta [(to-fieldlist tname
+                                            (map #(if (vector? %) (first %) (identity %))
+                                                 field))] {:prepend true})]
       (assoc this :grouped-by
              (conj (or grouped-by [])
                    (if (seq combinations)
@@ -453,7 +489,7 @@
   `(do
      ~@(for [nm names]
          (list 'def (-> nm name symbol)
-               (list 'cql/table conn-info nm)))))
+               (list 'table conn-info nm)))))
 
 (defn table?
   "Returns true if tinstance is an instnce of RTable"
@@ -463,8 +499,9 @@
 (defn pick [table kw]
   (transform table
              (fn [results]
-               (if (or (= 1 (count results)) (empty? results))
-                 (if (coll? kw)
-                   (map (first results) kw)
-                   (kw (first results)))
-                 (throw (Exception. "Multiple items in resultsetseq, keyword lookup not possible"))))))
+               (cond
+                (= 1 (count results)) (if (coll? kw)
+                                        (map (first results) kw)
+                                        ((first results) kw))
+                (empty? results) nil
+                :else (throw (Exception. "Multiple items in resultsetseq, keyword lookup not possible"))))))

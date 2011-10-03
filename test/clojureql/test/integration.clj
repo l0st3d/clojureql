@@ -1,4 +1,11 @@
 (ns clojureql.test.integration
+  "To run integration tests, you can use cake command line arguments:
+
+  cake test --integration=true
+
+  You will need to create MySQL, PostgreSQL and Sqlite3 databases according
+  to the parameters you can find in test/clojureql/test.clj"
+
   (:import java.sql.Timestamp)
   (:use clojure.test clojureql.core clojureql.test)
   (:refer-clojure
@@ -17,6 +24,16 @@
            {:wage 300, :id 7}
            {:wage 400, :id 8}))))
 
+(database-test test-generated-keys
+  ; old derby releases don't support generated keys
+  ; SQLite has a bug here, see http://code.google.com/p/sqlite-jdbc/issues/detail?id=10
+  (when (or (mysql?) (postgresql?)) 
+    (is (= 5 (-> (conj! salary {:wage 1337})
+                 meta :last-index)))
+    (is (= 6 (-> (update-in! salary (where (= :id 512))
+                           {:wage 1337})
+                 meta :last-index)))))
+
 (database-test test-join-explicitly
   (is (= @(join users salary (where (= :users.id :salary.id)))
          '({:wage 100, :title "Dev", :name "Lau Jensen", :id 1}
@@ -25,36 +42,53 @@
            {:wage 400, :title "Engineer", :name "Frank", :id 4}))))
 
 (database-test test-join-using
-  (is (= @(join users salary :id)
-         '({:wage 100, :title "Dev", :name "Lau Jensen", :id 1}
-           {:wage 200, :title "Design Guru", :name "Christophe", :id 2}
-           {:wage 300, :title "Mr. Macros", :name "sthuebner", :id 3}
-           {:wage 400, :title "Engineer", :name "Frank", :id 4}))))
+  (when (not (derby?)) ; derby doesn't support using
+    (is (= @(join users salary :id)
+           '({:wage 100, :title "Dev", :name "Lau Jensen", :id 1}
+             {:wage 200, :title "Design Guru", :name "Christophe", :id 2}
+             {:wage 300, :title "Mr. Macros", :name "sthuebner", :id 3}
+             {:wage 400, :title "Engineer", :name "Frank", :id 4})))))
 
 (database-test test-case
-  (is (= @(-> (project salary
-                       [:id (case :wages
-                                  (<= :wage 150)  "low"
-                                  (>= :wage 150)  "high"
-                                  :else "average")])
-              (select (where (<= :id 2))))
-         '({:wages "low" :id 1}
-           {:wages "high" :id 2}))))
+  (when (not (derby?)) ; derby doesn't support ? in case
+    (is (= @(-> (project salary
+                         [:id (case :wages
+                                    (<= :wage 150)  "low"
+                                    (>= :wage 150)  "high"
+                                    :else "average")])
+                (select (where (<= :id 2))))
+           '({:wages "low" :id 1}
+             {:wages "high" :id 2})))))
 
 (database-test test-chained-statements
-  (is (= @(-> users
-              (conj! {:name "Jack"})          ; Add a single row
-              (disj! (where (= :id 1)))       ; Remove another
-              (update-in! (where (= :id 2))
-                          {:name "John"})     ; Update a third
-              (sort [:id#desc])               ; Prepare to sort
-              (project [:id :title])          ; Returns colums id and title
-              (select (where (<= :id 10)))    ; Where ID is <= 10
-              (join salary :id)               ; Join with table salary
-              (limit 10))                     ; Take a maximum of 10 entries
-         '({:id 4, :title "Engineer", :wage 400}
-           {:id 3, :title "Mr. Macros", :wage 300}
-           {:id 2, :title "Design Guru", :wage 200}))))
+  (if (derby?) ; derby doesn't support using
+    (is (= @(-> users
+                (conj! {:name "Jack"})          ; Add a single row
+                (disj! (where (= :id 1)))       ; Remove another
+                (update-in! (where (= :id 2))
+                            {:name "John"})     ; Update a third
+                (sort [:id#desc])               ; Prepare to sort
+                (project [:id :title])          ; Returns colums id and title
+                (select (where (<= :id 10)))    ; Where ID is <= 10
+                (join salary
+                      (where (= :users.id
+                                :salary.id))))  ; Join with table salary explicitly
+           '({:id 4, :title "Engineer", :wage 400}
+             {:id 3, :title "Mr. Macros", :wage 300}
+             {:id 2, :title "Design Guru", :wage 200})))               
+    (is (= @(-> users
+                (conj! {:name "Jack"})          ; Add a single row
+                (disj! (where (= :id 1)))       ; Remove another
+                (update-in! (where (= :id 2))
+                            {:name "John"})     ; Update a third
+                (sort [:id#desc])               ; Prepare to sort
+                (project [:id :title])          ; Returns colums id and title
+                (select (where (<= :id 10)))    ; Where ID is <= 10
+                (join salary :id)               ; Join with table salary
+                (limit 10))                     ; Take a maximum of 10 entries
+           '({:id 4, :title "Engineer", :wage 400}
+             {:id 3, :title "Mr. Macros", :wage 300}
+             {:id 2, :title "Design Guru", :wage 200})))))
 
 (database-test test-implicit-asc-sort
   (is (= @(-> (disj! users (where (or (= :id 3) (= :id 4))))
@@ -62,8 +96,9 @@
          '({:title "Dev", :name "Lau Jensen", :id 1}
            {:title "Design Guru", :name "Christophe", :id 2}))))
 
-(database-test test-implicit-asc-sort
-  (is (= 1 (count @(limit users 1)))))
+(database-test test-limit-1
+  (if (not (derby?))
+    (is (= 1 (count @(limit users 1))))))
 
 (database-test test-avg
   (insert-data)
@@ -74,6 +109,8 @@
                         '({:avg 250.0000M})))
    (sqlite3?)    (is (= @(-> (table :salary) (project [[:avg/wage :as :avg]]))
                         '({:avg 250.0})))
+   (derby?)      (is (= @(-> (table :salary) (project [[:avg/wage :as :avgx]])) ; avg is a keyword in derby
+                        '({:avgx 250.0})))
    :else true))
 
 (database-test test-select-with-nil-and-value
@@ -84,17 +121,21 @@
     (is (empty? @(select (table :users) (where (= nil nil))))))
 
 (database-test test-select-is-null
-  (when (or (postgresql?) (mysql?)) ; (where true) not supported by sqlite3
+  (when (or (postgresql?) (mysql?)) ; (where true) not supported by sqlite3, derby
     (let [[alice bob] @(-> (disj! users (where true))
                            (conj! [{:name "Alice" :title "Developer"}
                                    {:name "Bob"}]))]
       (is (= bob (first @(select users (where (= :title nil)))))))))
 
 (database-test test-select-is-not-null
-  (when (or (postgresql?) (mysql?)) ; (where true) not supported by sqlite3
+  (when (or (postgresql?) (mysql?)) ; (where true) not supported by sqlite3, derby
     (let [[alice bob] @(-> (disj! users (where true))
                            (conj! [{:name "Alice" :title "Developer"} {:name "Bob"}]))]
       (is (= alice (first @(select users (where (!= :title nil)))))))))
+
+(database-test test-select-equals
+  (is (= @(select users (where (= :title "Dev")))
+         '({:title "Dev", :name "Lau Jensen", :id 1}))))
 
 (database-test test-select-or
   (is (= @(select users (where (or (= :id 1) (>= :id 10))))
@@ -108,20 +149,27 @@
   (is (= @(select users (where (not (or (< :id 2) (not (< :id 3))))))
          '({:title "Design Guru", :name "Christophe", :id 2}))))
 
+(database-test test-update!
+  (is (= @(-> (update! users (where (= :id 2)) {:name "John"})
+              (select (where (= :id 2))))
+         '({:title "Design Guru", :name "John", :id 2}))))
+
 (database-test test-update-in!
   (is (= @(-> (update-in! users (where (= :id 2)) {:name "John"})
               (select (where (= :id 2))))
          '({:title "Design Guru", :name "John", :id 2}))))
 
 (database-test test-update-in!-with-nil
-  (when (or (postgresql?) (sqlite3?)) ; TODO: MySQL does not insert new row!?
-    (is (= @(-> (update-in! users (where (= :id nil)) {:name "John"})
-                (project [:id :name :title]))
-           '({:title "Dev", :name "Lau Jensen", :id 1}
-             {:title "Design Guru", :name "Christophe", :id 2}
-             {:title "Mr. Macros", :name "sthuebner", :id 3}
-             {:title "Engineer", :name "Frank", :id 4}
-             {:title nil, :name "John", :id 5})))))
+  (let [t #(is (= @(-> (update-in! users (where (= :id nil)) {:name "John"})
+                       (project [:id :name :title]))
+                  '({:title "Dev", :name "Lau Jensen", :id 1}
+                    {:title "Design Guru", :name "Christophe", :id 2}
+                    {:title "Mr. Macros", :name "sthuebner", :id 3}
+                    {:title "Engineer", :name "Frank", :id 4}
+                    {:title nil, :name "John", :id 5})))]
+    (if (mysql?) ;; mysql bugs here, if we stay in the same connection
+      (clojure.java.jdbc/with-connection mysql (t))
+      (t))))
 
 (database-test test-update-in!-with-timestamp
   (let [user (first @(update-in! users
@@ -147,7 +195,7 @@
                                      (table :users))))))))
 
 (database-test test-union
-  (when (or (postgresql?) (mysql?))
+  (when (or (postgresql?) (mysql?) (derby?))
     (let [[alice bob] @(conj! users [{:name "Alice" :title "Developer"} {:name "Bob"}])]
       (is (= (map :id [alice bob])
              (map :id @(union (select (table :users) (where (= :id (:id alice))))
@@ -163,7 +211,9 @@
     (is (= connection-info-from-var connection-info-from-fn))))
 
 (database-test test-resultset
-  (let [tbl (join users salary :id)
+  (let [tbl (if (derby?) ; derby doesn't support join using
+              (join users salary (where (= :users.id :salary.id)))
+              (join users salary :id))
         no-missing? #(not
                      (some keyword? ; which would be :clojureql.internal/missing
                            (mapcat vals %)))]
@@ -173,10 +223,11 @@
       (is (= res @tbl)))))
 
 (database-test test-dupes
-  (let [tbl (join
-             (project users [[:name :as :dupe]])
-             (project salary  [[:wage :as :dupe]])
-             :id)]
+  (let [users-tbl  (project users  [[:name :as :dupe]])
+        salary-tbl (project salary [[:wage :as :dupe]])
+        tbl (if derby? ; derby doesn't support join using
+              (join users-tbl salary-tbl (where (= :users.id :salary.id)))
+              (join users-tbl salary-tbl :id))]
     (is (thrown-with-msg? Exception
           #".*:dupe.*" @tbl)))
   (let [tbl (project users [[:name :as :dupe]
@@ -194,9 +245,13 @@
            '("Lau Jensen" "Christophe" "sthuebner" "Frank")))))
 
 (database-test test-pick
-  (is (= @(-> (select users (where (= :id 4)))
-              (pick :name))
-         "Frank")))
+  (let [q (select users (where (= :id 4)))
+        eq (select users (where (= :id 1337)))]
+    (is (= @(pick q :name) "Frank"))
+    (is (= @(pick q :id) 4))
+    (is (= @(pick q [:title :name]) ["Engineer" "Frank"]))
+    (is (= @(pick eq :name) nil))
+    (is (= @(pick eq [:title :name])) nil)))
 
 (database-test test-composing-transforms
   (is (= @(-> users

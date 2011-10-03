@@ -1,9 +1,10 @@
 (ns clojureql.internal
+  (:import [java.sql Statement])
   (:require
-   [clojure.contrib.sql.internal :as sqlint]
-   [clojure.contrib.sql :as csql])
+    [clojure.java.jdbc.internal :as jdbcint]
+    [clojure.java.jdbc :as jdbc])
   (:use [clojure.string :only [join upper-case] :rename {join join-str}]
-        [clojure.contrib.core :only [-?> -?>>]]))
+        [clojure.core.incubator :only [-?> -?>>]]))
 
 (defn upper-name [kw]
   (-> kw name .toUpperCase))
@@ -113,8 +114,8 @@
                     (apply str))
                (if (or (keyword? aggregates)
                        (some (fn [i] (= (nskeyword i) (nskeyword %))) aggregates))
-                 (str (nskeyword %) " asc")
-                 (str (add-tname tname %) " asc"))))
+                 (str (nskeyword %) " ASC")
+                 (str (if (keyword? %) (add-tname tname %) %) " ASC"))))
        (interpose ",")
        (apply str)))
 
@@ -145,6 +146,14 @@
            (let [[aggr col] (-> (nskeyword c) (.split "/"))]
              (str aggr "(" (split-fields p col) ")"))
            (add-tname p c))))))
+
+(defn to-tablealias
+  "Returns the alias of a :tname. If :tname is not aliased it
+  returns the same as to-tablename."
+  [c]
+  (if (map? c)
+    (name (first (vals c)))
+    (to-tablename c)))
 
 (defn emit-case
   [{:keys [alias clauses returns else]}]
@@ -339,36 +348,58 @@
   [[sql & params :as sql-params] func]
   (when-not (vector? sql-params)
     (throw (Exception. "sql-params must be a vector")))
-  (with-open [stmt (.prepareStatement (:connection sqlint/*db*) sql)]
+  (with-open [stmt (jdbc/prepare-statement (:connection jdbcint/*db*) sql)]
     (doseq [[idx v] (map vector (iterate inc 1) params)]
       (.setObject stmt idx v))
-    (if-let [fetch-size (-> sqlint/*db* :opts :fetch-size)]
+    (if-let [fetch-size (-> jdbcint/*db* :opts :fetch-size)]
       (do
         (.setFetchSize stmt fetch-size)
-        (csql/transaction
+        (jdbc/transaction
          (with-open [rset (.executeQuery stmt)]
            (func (result-seq rset)))))
       (with-open [rset (.executeQuery stmt)]
         (func (result-seq rset))))))
 
+(defn supports-generated-keys? [conn]
+  "Checks if the JDBC Driver supports generated keys"
+  (try (.supportsGetGeneratedKeys (.getMetaData conn))
+       (catch AbstractMethodError _ false)))
+
+(defn prepare-statement [conn sql]
+  "When supported by the JDBC Driver, creates a new prepared statement which will return the generated keys - else returns a 'normal' prepared statement"
+  (if (supports-generated-keys? conn)
+    (jdbc/prepare-statement conn sql :return-keys true)
+    (jdbc/prepare-statement conn sql)))
+
+(defn generated-keys [stmt]
+  "When supported by the JDBC driver, returns the generated keys of the latest executed statement"
+  (when (supports-generated-keys? (.getConnection stmt))
+    (let [ks (.getGeneratedKeys stmt)]
+      {:last-index 
+       (and
+        (.next ks)
+        (.getInt ks 1))})))
+
 (defn exec-prepared
   "Executes an (optionally parameterized) SQL prepared statement on the
   open database connection. Each param-group is a seq of values for all of
   the parameters."
-  [sql & param-groups]
-  (with-open [stmt (.prepareStatement (:connection sqlint/*db*) sql)]
-    (doseq [param-group param-groups]
-      (doseq [[idx v] (map vector (iterate inc 1) param-group)]
-        (.setObject stmt idx v))
-      (.addBatch stmt))
-    (csql/transaction
-     (let [retr (.executeBatch stmt)
-           ks   (.getGeneratedKeys stmt)]
-       (with-meta
-         (seq retr)
-         {:last-index (if (.next ks)
-                        (.getInt ks 1)
-                        nil)})))))
+  ([sql param-group]
+     (with-open [stmt (prepare-statement (:connection jdbcint/*db*) sql)]
+       (doseq [[idx v] (map vector (iterate inc 1) param-group)]
+         (.setObject stmt idx v))
+       (jdbc/transaction
+        (let [retr (.execute stmt)]
+          (with-meta [(.getUpdateCount stmt)]
+            (generated-keys stmt))))))
+  ([sql param-group & param-groups]
+     (with-open [stmt (jdbc/prepare-statement (:connection jdbcint/*db*) sql)]
+       (doseq [param-group (cons param-group param-groups)]
+         (doseq [[idx v] (map vector (iterate inc 1) param-group)]
+           (.setObject stmt idx v))
+         (.addBatch stmt))
+       (jdbc/transaction
+        (seq (.executeBatch stmt))))))
 
 (defn conj-rows
   "Inserts rows into a table with values for specified columns only.
@@ -409,7 +440,7 @@
   criteria followed by values for any parameters. record is a map from
   strings or keywords (identifying columns) to updated values."
   [table where-params record]
-  (csql/transaction
+  (jdbc/transaction
    (let [result (update-vals table where-params record)]
      (if (zero? (first result))
        (conj-rows table (keys record) (vals record))

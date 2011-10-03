@@ -1,8 +1,9 @@
 (ns clojureql.test.core
   (:refer-clojure
    :exclude [compile take drop sort distinct conj! disj! case])
-  (:use [clojureql.internal :only [update-or-insert-vals]]
-        [clojure.contrib.sql :only [with-connection find-connection]]
+  (:use [clojureql.internal :only [update-or-insert-vals update-vals]]
+        [clojure.java.jdbc :only [with-connection]]
+        [clojure.java.jdbc.internal :only [find-connection*]]
         clojure.test
         clojureql.core
         clojure.contrib.mock)
@@ -28,7 +29,7 @@
 
 (defn resolve-table-db [spec-on-tble]
   (with-cnx spec-on-tble
-    (get (find-connection) :id)))
+    (get (find-connection*) :id)))
 
 (deftest connection-sources
   (testing "missing connection info"
@@ -149,6 +150,12 @@
              (select (where (= :title "Developer"))))
          "SELECT users.* FROM users WHERE (users.id = 5) AND (users.title = Developer)"))
 
+  (testing "String predicates"
+    (are [x y] (= (-> x (compile nil) interpolate-sql) y)
+         (-> (table :users)
+             (select "name = 'Frank'"))
+         "SELECT users.* FROM users WHERE name = 'Frank'"))
+
   (testing "projections"
     (are [x y] (= (-> x (compile nil) interpolate-sql) y)
          (-> (table :users)
@@ -200,7 +207,22 @@
          select-country-ids-with-region-count
          (str "SELECT regions.country_id,count(regions.id) AS regions FROM regions GROUP BY regions.country_id")
          select-country-ids-with-spot-count
-         (str "SELECT spots.country_id,count(spots.id) AS spots FROM spots GROUP BY spots.country_id")))
+         (str "SELECT spots.country_id,count(spots.id) AS spots FROM spots GROUP BY spots.country_id")
+         (-> (table :users)
+             (select (where (= :admin true)))
+             (aggregate [[:count/* :as :user_count]] [:country]))
+         (str "SELECT users.country,count(*) AS user_count FROM users "
+              "WHERE (users.admin = true) GROUP BY users.country")
+         (-> (table :users)
+             (select (where (= :admin true)))
+             (aggregate [:count/*] [[:country :as :user_country]]))
+         (str "SELECT users.country AS user_country,count(*) FROM users "
+              "WHERE (users.admin = true) GROUP BY users.country")
+         (-> (table :users)
+             (select (where (= :admin true)))
+             (aggregate [:count/*] [:name [:country :as :user_country]]))
+         (str "SELECT users.name,users.country AS user_country,count(*) FROM users "
+              "WHERE (users.admin = true) GROUP BY users.name,users.country")))
 
   (testing "join with aggregate"
     (let [photo-counts-by-user (-> (table :photos)
@@ -236,7 +258,9 @@
                 "JOIN salary w1 ON (u1.id = w1.id) WHERE (s2.article IS NULL)")
            (-> u1 (join (project w1 [[:wage :as :income]]) (where (= :u1.id :w1.id))))
            (str "SELECT u1.id,u1.article,u1.price,w1.wage AS income "
-                "FROM users u1 JOIN salary w1 ON (u1.id = w1.id)"))))
+                "FROM users u1 JOIN salary w1 ON (u1.id = w1.id)")
+           (select (table {:users :developers}) (where (= :title "Dev")))
+           "SELECT developers.* FROM users developers WHERE (developers.title = Dev)")))
 
   (testing "joining on multiple tables"
     (are [x y] (= (-> x (compile nil) interpolate-sql) y)
@@ -335,13 +359,21 @@
 		"JOIN skus ON (skus.id = product_variant_skus.sku_id) "
 		"JOIN products ON (products.id = product_variants.product_id) "
 		"WHERE (orders.status = 1)"))))
-  
+
+  (testing "update!"
+    (expect [update-vals (has-args [:users ["(id = ?)" 1] {:name "Bob"}])
+             find-connection* (returns true)]
+      (update! (table :users) (where (= :id 1)) {:name "Bob"}))
+    (expect [update-vals (has-args [:users ["(salary IS NULL)"] {:salary 1000}])
+             find-connection* (returns true)]
+      (update! (table :users) (where (= :salary nil)) {:salary 1000})))
+
   (testing "update-in!"
     (expect [update-or-insert-vals (has-args [:users ["(id = ?)" 1] {:name "Bob"}])
-             find-connection (returns true)]
+             find-connection* (returns true)]
       (update-in! (table :users) (where (= :id 1)) {:name "Bob"}))
     (expect [update-or-insert-vals (has-args [:users ["(salary IS NULL)"] {:salary 1000}])
-             find-connection (returns true)]
+             find-connection* (returns true)]
       (update-in! (table :users) (where (= :salary nil)) {:salary 1000})))
 
   (testing "difference"
@@ -405,44 +437,47 @@
 
   (testing "sort"
     (are [x y] (= (-> x (compile nil) interpolate-sql) y)
+         (-> (table :continents)
+             (sort [(str "distance(location, ST_GeomFromText('SRID=4326;POINT(0 0)'))")]))
+         "SELECT continents.* FROM continents ORDER BY distance(location, ST_GeomFromText('SRID=4326;POINT(0 0)')) ASC"
          (-> (table :t1)
              (sort [:id]))
-         "SELECT t1.* FROM t1 ORDER BY t1.id asc"
+         "SELECT t1.* FROM t1 ORDER BY t1.id ASC"
          (-> (table :t1)
              (sort [:id])
              (take 5))
-         "SELECT t1.* FROM t1 ORDER BY t1.id asc LIMIT 5"
+         "SELECT t1.* FROM t1 ORDER BY t1.id ASC LIMIT 5"
          (-> (table :t1)
              (sort [:id])
              (take 5)
              (sort [:wage]))
-         "SELECT * FROM (SELECT t1.* FROM t1 ORDER BY t1.id asc LIMIT 5) ORDER BY wage asc"
+         "SELECT * FROM (SELECT t1.* FROM t1 ORDER BY t1.id ASC LIMIT 5) ORDER BY wage ASC"
          (-> (table :t1)
              (sort [:id])
              (drop 10)
              (take 5)
              (sort [:wage]))
-         "SELECT * FROM (SELECT t1.* FROM t1 ORDER BY t1.id asc LIMIT 5 OFFSET 10) ORDER BY wage asc"))
+         "SELECT * FROM (SELECT t1.* FROM t1 ORDER BY t1.id ASC LIMIT 5 OFFSET 10) ORDER BY wage ASC"))
   ;TODO: Last two examples should not qualify wage?
 
   (testing "combinations with sort/limit"
     (are [x y] (= (-> x (compile nil) interpolate-sql) y)
          (-> (union (table :t1) (table :t2))
              (sort [:t2.id]))
-         "(SELECT t1.* FROM t1 ) UNION (SELECT t2.* FROM t2) ORDER BY t2.id asc"
+         "(SELECT t1.* FROM t1 ) UNION (SELECT t2.* FROM t2) ORDER BY t2.id ASC"
          (-> (table :t1)
              (union (sort (table :t2) [:id])))
-         "(SELECT t1.* FROM t1 ) UNION (SELECT t2.* FROM t2 ORDER BY t2.id asc)"
+         "(SELECT t1.* FROM t1 ) UNION (SELECT t2.* FROM t2 ORDER BY t2.id ASC)"
          (-> (sort (table :t1) [:username])
              (union (table :t2)))
-         "(SELECT t1.* FROM t1 ORDER BY t1.username asc) UNION (SELECT t2.* FROM t2)"
+         "(SELECT t1.* FROM t1 ORDER BY t1.username ASC) UNION (SELECT t2.* FROM t2)"
          (union (sort (table :t1) [:id])
                 (sort (table :t2) [:id]))
-         "(SELECT t1.* FROM t1 ORDER BY t1.id asc) UNION (SELECT t2.* FROM t2 ORDER BY t2.id asc)"
+         "(SELECT t1.* FROM t1 ORDER BY t1.id ASC) UNION (SELECT t2.* FROM t2 ORDER BY t2.id ASC)"
          (-> (union (sort (table :t1) [:id])
                     (sort (table :t2) [:id]))
              (sort [:em]))
-         "(SELECT t1.* FROM t1 ORDER BY t1.id asc) UNION (SELECT t2.* FROM t2 ORDER BY t2.id asc) ORDER BY em asc"
+         "(SELECT t1.* FROM t1 ORDER BY t1.id ASC) UNION (SELECT t2.* FROM t2 ORDER BY t2.id ASC) ORDER BY em ASC"
          (-> (aggregate (table :t1) [[:count/* :as :cnt]] [:id])
              (union (table :t2)))
          "(SELECT t1.id,count(*) AS cnt FROM t1 GROUP BY t1.id) UNION (SELECT t2.* FROM t2) GROUP BY t1.id"

@@ -2,8 +2,7 @@
   (:refer-clojure
    :exclude [compile take drop sort distinct conj! disj! case])
   (:use [clojureql.internal :only [update-or-insert-vals update-vals]]
-        [clojure.java.jdbc :only [with-connection]]
-        [clojure.java.jdbc.internal :only [find-connection*]]
+        [clojure.java.jdbc :only [with-connection find-connection]]
         clojure.test
         clojureql.core
         clojure.contrib.mock)
@@ -29,7 +28,7 @@
 
 (defn resolve-table-db [spec-on-tble]
   (with-cnx spec-on-tble
-    (get (find-connection*) :id)))
+    (get (find-connection) :id)))
 
 (deftest connection-sources
   (testing "missing connection info"
@@ -179,6 +178,20 @@
              (join (table :salary) (where (= :users.id :salary.id)))
              (project [:users.id :salary.wage]))
          "SELECT users.id,salary.wage FROM users JOIN salary ON (users.id = salary.id)"))
+
+  (testing "ordering in joins"
+    (are [x y] (= (-> x (compile nil) interpolate-sql) y)
+         (-> (table :users)
+             (join (table :salary) (where (= :wages.id :salary.id)))
+             (join (table :wages) (where (= :wages.id :users.id))))
+         "SELECT users.*,salary.*,wages.* FROM users JOIN wages ON (wages.id = users.id) JOIN salary ON (wages.id = salary.id)"))
+
+  (testing "ordering in joins with table alias"
+    (are [x y] (= (-> x (compile nil) interpolate-sql) y)
+         (-> (table {:users :u})
+             (join (table {:salary :s}) (where (= :w.id :s.id)))
+             (join (table {:wages :w}) (where (= :w.id :u.id))))
+         "SELECT u.*,s.*,w.* FROM users u JOIN wages w ON (w.id = u.id) JOIN salary s ON (w.id = s.id)"))
 
   (testing "renaming in joins"
     (are [x y] (= (-> x (compile nil) interpolate-sql) y)
@@ -362,18 +375,18 @@
 
   (testing "update!"
     (expect [update-vals (has-args [:users ["(id = ?)" 1] {:name "Bob"}])
-             find-connection* (returns true)]
+             find-connection (returns true)]
       (update! (table :users) (where (= :id 1)) {:name "Bob"}))
     (expect [update-vals (has-args [:users ["(salary IS NULL)"] {:salary 1000}])
-             find-connection* (returns true)]
+             find-connection (returns true)]
       (update! (table :users) (where (= :salary nil)) {:salary 1000})))
 
   (testing "update-in!"
     (expect [update-or-insert-vals (has-args [:users ["(id = ?)" 1] {:name "Bob"}])
-             find-connection* (returns true)]
+             find-connection (returns true)]
       (update-in! (table :users) (where (= :id 1)) {:name "Bob"}))
     (expect [update-or-insert-vals (has-args [:users ["(salary IS NULL)"] {:salary 1000}])
-             find-connection* (returns true)]
+             find-connection (returns true)]
       (update-in! (table :users) (where (= :salary nil)) {:salary 1000})))
 
   (testing "difference"

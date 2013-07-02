@@ -5,3 +5,11 @@ pom.xml
 lib
 classes
 build
+target/
+*.log
+*.class
+.lein-deps-sum
+.lein-failures
+.lein-plugins
+.lein-env
+.lein-repl-history

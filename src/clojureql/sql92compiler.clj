@@ -113,7 +113,7 @@
                            (interleave (mapcat #(mapcat (fn [clause] (:env clause)) %)
                                                (map :clauses cases))
                                        (mapcat :returns cases)))
-                         (mapcat last jdata)
+                         ;(mapcat last jdata)
                          (map :else (filter map? tcols))
                          (map (comp :env second) jdata)
                          (if (table? tcols) (rest tables))

@@ -1,4 +1,4 @@
-ClojureQL
+ClojureQL [![Build Status](https://secure.travis-ci.org/delver/clojureql.png)](http://travis-ci.org/delver/clojureql)
 =========
 
 ClojureQL is an abstraction layer sitting on top of standard low-level JDBC SQL integration.

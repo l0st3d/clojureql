@@ -7,7 +7,7 @@
 
 (if (find-ns 'cake)
   (refer 'cake :only ['*opts*])
-  (def *opts* {:integration (System/getProperty "integration")}))
+  (def ^:dynamic *opts* {:integration (System/getProperty "integration")}))
 
 (when (:show-sql *opts*)
   (alter-var-root #'clojureql.core/*debug* (constantly true)))

@@ -40,7 +40,7 @@
     (is (= :global
            (resolve-table-db nil)))
 
-    ; with-connection takes precedence
+					; with-connection takes precedence
     (with-connection (mock-connection-info :with-connection)
       (is (= :with-connection
             (resolve-table-db nil)))))
@@ -49,27 +49,27 @@
     (is (= :local
            (resolve-table-db (mock-connection-info :local))))
 
-    ; c.c.sql with-connection still takes precedence
+					; c.c.sql with-connection still takes precedence
     (with-connection (mock-connection-info :with-connection)
       (is (= :with-connection
             (resolve-table-db (mock-connection-info :local))))))
   (close-global))
 
 (def select-country-ids-with-spot-count
-  (-> (table :spots)
-      (aggregate [[:count/id :as :spots]] [:country_id])))
+     (-> (table :spots)
+	 (aggregate [[:count/id :as :spots]] [:country_id])))
 
 (def select-country-ids-with-region-count
-  (-> (table :regions)
-      (aggregate [[:count/id :as :regions]] [:country_id])))
+     (-> (table :regions)
+	 (aggregate [[:count/id :as :regions]] [:country_id])))
 
 (def select-countries-with-region-and-spot-count
-  (-> (table :countries)
-      (outer-join select-country-ids-with-region-count :left
-                  (where (= :countries.id :regions.country_id)))
-      (outer-join select-country-ids-with-spot-count :left
-                  (where (= :countries.id :spots.country_id)))
-      (select (where (= :regions_subselect.country_id :spots_subselect.country_id)))))
+     (-> (table :countries)
+	 (outer-join select-country-ids-with-region-count :left
+		     (where (= :countries.id :regions.country_id)))
+	 (outer-join select-country-ids-with-spot-count :left
+		     (where (= :countries.id :spots.country_id)))
+	 (select (where (= :regions_subselect.country_id :spots_subselect.country_id)))))
 
 (defn select-location [table-name]
   (-> (table table-name)
@@ -319,58 +319,173 @@
 		"JOIN t4 ON (t3.b = t4.b) "
 		"JOIN t5 ON (t5.d = t4.d)")))
     (let [product-variants-table (project (table :product_variants)
-					      [[:id			:as :product_variant_id]
-					       [:product_id		:as :product_variant_product_id]
-					       [:product_code		:as :product_variant_product_code]
-					       [:status			:as :product_variant_status]
-					       [:price_id		:as :product_variant_price_id]])
+					  [[:id					:as :product_variant_id]
+					   [:product_id				:as :product_variant_product_id]
+					   [:product_code			:as :product_variant_product_code]
+					   [:status				:as :product_variant_status]
+					   [:price_id				:as :product_variant_price_id]])
 	  products-table (project (table :products)
-				      [[:id				:as :product_id]
-				       [:name				:as :product_name]
-				       [:description			:as :product_description]
-				       [:manufacturer_id		:as :product_manufacturer_id]])
+				  [[:id						:as :product_id]
+				   [:name					:as :product_name]
+				   [:description				:as :product_description]
+				   [:manufacturer_id				:as :product_manufacturer_id]])
 	  product-variant-skus-table (project (table :product_variant_skus)
-						  [[:id			:as :product_variant_sku_id]
-						   [:product_variant_id	:as :product_variant_sku_product_variant_id]
-						   [:sku_id		:as :product_variant_sku_sku_id]
-						   [:quantity		:as :product_variant_sku_quantity]])
+					      [[:id				:as :product_variant_sku_id]
+					       [:product_variant_id		:as :product_variant_sku_product_variant_id]
+					       [:sku_id				:as :product_variant_sku_sku_id]
+					       [:quantity			:as :product_variant_sku_quantity]])
 	  orders-table   (project (table :orders)
-				      [[:id				:as :order_id]
-				       [:customer_id			:as :order_customer_id]
-				       [:customer_ref			:as :order_customer_ref]
-				       [:created			:as :order_created]
-				       [:status				:as :order_status]
-				       [:created_by			:as :order_created_by]
-				       [:source_id			:as :order_source_id]
-				       [:updated			:as :order_updated]
-				       [:cancellation_reason_id		:as :order_cancellation_reason_id]
-				       [:expirable			:as :order_expirable]
-				       [:shipping_method_id		:as :order_shipping_method_id]])
+				  [[:id						:as :order_id]
+				   [:customer_id				:as :order_customer_id]
+				   [:customer_ref				:as :order_customer_ref]
+				   [:created					:as :order_created]
+				   [:status					:as :order_status]
+				   [:created_by					:as :order_created_by]
+				   [:source_id					:as :order_source_id]
+				   [:updated					:as :order_updated]
+				   [:cancellation_reason_id			:as :order_cancellation_reason_id]
+				   [:expirable					:as :order_expirable]
+				   [:shipping_method_id				:as :order_shipping_method_id]])
 	  order-lines-table (project (table :order_lines)
-					 [[:id				:as :order_line_id]
-					  [:order_id			:as :order_line_order_id]
-					  [:product_variant_id		:as :order_line_product_variant_id]
-					  [:quantity			:as :order_line_quantity]
-					  [:status			:as :order_line_status]
-					  [:updated			:as :order_line_updated]
-					  [:price_id			:as :order_line_price_id]
-					  [:shippable_estimate		:as :order_line_shippable_estimate]])
+				     [[:id					:as :order_line_id]
+				      [:order_id				:as :order_line_order_id]
+				      [:product_variant_id			:as :order_line_product_variant_id]
+				      [:quantity				:as :order_line_quantity]
+				      [:status					:as :order_line_status]
+				      [:updated					:as :order_line_updated]
+				      [:price_id				:as :order_line_price_id]
+				      [:shippable_estimate			:as :order_line_shippable_estimate]])
+	  alt-order-lines-table (project (table "order_lines alt_order_lines")
+					 [[:id					:as :alt_order_line_id]
+					  [:order_id				:as :alt_order_line_order_id]
+					  [:product_variant_id			:as :alt_order_line_product_variant_id]
+					  [:quantity				:as :alt_order_line_quantity]
+					  [:status				:as :alt_order_line_status]
+					  [:updated				:as :alt_order_line_updated]
+					  [:price_id				:as :alt_order_line_price_id]
+					  [:shippable_estimate			:as :alt_order_line_shippable_estimate]])
+	  shipment-lines-table (project (table :shipment_lines)
+					[[:shipment_lines.id			:as :shipment_line_id]
+					 [:shipment_lines.shipment_id		:as :shipment_line_shipment_id]
+					 [:shipment_lines.order_line_id		:as :shipment_line_order_line_id]
+					 [:shipment_lines.picker_id		:as :shipment_line_picker_id]
+					 [:shipment_lines.status		:as :shipment_line_status]])
+	  alt-shipment-lines-table (project (table "shipment_lines alt_shipment_lines")
+					    [[:shipment_lines.id		:as :alt_shipment_line_id]
+					     [:shipment_lines.shipment_id	:as :alt_shipment_line_shipment_id]
+					     [:shipment_lines.order_line_id	:as :alt_shipment_line_order_line_id]
+					     [:shipment_lines.picker_id		:as :alt_shipment_line_picker_id]
+					     [:shipment_lines.status		:as :alt_shipment_line_status]])
 	  orders-with-lines-query (-> orders-table
 				      (join order-lines-table (where (= :orders.id :order_lines.order_id))))
-	  sku-table (project (table :skus) [[:id		:as :sku_id]
-						    [:stock_code	:as :sku_stock_code]
-						    [:barcode		:as :sku_barcode]
-						    [:reorder_quantity	:as :sku_reorder_quantity]
-						    [:minimum_level	:as :sku_minimum_level]])
+	  sku-table (project (table :skus) [[:id				:as :sku_id]
+					    [:stock_code			:as :sku_stock_code]
+					    [:barcode				:as :sku_barcode]
+					    [:reorder_quantity			:as :sku_reorder_quantity]
+					    [:minimum_level			:as :sku_minimum_level]])
 	  products-with-skus-query (-> product-variants-table
 				       (join products-table (where (= :products.id :product_variants.product_id)))
 				       (join product-variant-skus-table (where (= :product_variants.id :product_variant_skus.product_variant_id)))
 				       (join sku-table (where (= :skus.id :product_variant_skus.sku_id))))
 	  orders-with-skus-query (-> orders-with-lines-query
 				     (join products-with-skus-query
-					       (where (= :order_lines.product_variant_id :product_variants.id))))
+					   (where (= :order_lines.product_variant_id :product_variants.id))))
 	  open-orders-with-skus-query  (-> orders-with-skus-query
-					   (select (where (= :orders.status 1))))]
+					   (select (where (= :orders.status 1))))
+	  skus-being-picked-query (-> shipment-lines-table
+				      (join order-lines-table (where (= :shipment_lines.order_line_id :order_lines.id)))
+				      (join product-variant-skus-table (where (= :product_variant_skus.product_variant_id :order_lines.product_variant_id)))
+				      (join alt-order-lines-table (where (= :alt_order_lines.product_variant_id :product_variant_skus.product_variant_id)))
+				      (join alt-shipment-lines-table (where (= :alt_order_lines.id :alt_shipment_lines.order_line_id)))
+				      (select (where (and (= :shipment_lines.id 1)
+							  (= :alt_shipment_lines.status "PICKED")))))
+	  product-attributes-table (project (table :product_attributes)
+					    [[:id				:as :product_attribute__id]
+					     [:product_id			:as :product_attribute__product_id]
+					     [:product_variant_id		:as :product_attribute__product_variant_id]
+					     [:name				:as :product_attribute__name]
+					     [:value				:as :product_attribute__value]])
+	  manufacturers-table (project (table :manufacturers)
+				       [[:id					:as :manufacturer__id]
+					[:name					:as :manufacturer__name]
+					[:hidden				:as :manufacturer__hidden]])
+	  products-with-variants (-> products-table
+				     (join product-variants-table (where (= :product_variants.product_id :products.id)))
+				     (outer-join product-attributes-table :left (where (and (= :product_attributes.product_id :product_variants.product_id)
+											    (or (= :product_attributes.product_variant_id :product_variants.id)
+												(nil? :product_attributes.product_variant_id)))))
+				     (outer-join manufacturers-table :left (where (= :manufacturers.id :products.manufacturer_id))))
+	  product-variant-prices-table (project (table :product_variant_prices)
+						[[:id				:as :product_variant_price__id]
+						 [:price_id			:as :product_variant_price__price_id]
+						 [:product_variant_id		:as :product_variant_price__product_variant_id]
+						 [:price_list_id		:as :product_variant_price__price_list_id]])
+	  price-lists-table (project (table :price_lists)
+				     [[:id					:as :price_list__id]
+				      [:currency_id				:as :price_list__currency_id]
+				      [:handle					:as :price_list__handle]])
+	  skus-table (project (table :skus)
+			      [[:id						:as :sku__id]
+			       [:stock_code					:as :sku__stock_code]
+			       [:barcode					:as :sku__barcode]
+			       [:reorder_quantity				:as :sku__reorder_quantity]
+			       [:minimum_level					:as :sku__minimum_level]
+			       [:warehouse_location_id				:as :sku__warehouse_location_id]])
+	  prices-projection [[:prices.id					:as :price_id]
+			     [:prices.pence					:as :price_pence]
+			     [:prices.tax_percent				:as :price_tax_percent]
+			     [:taxes.name					:as :tax_name]
+			     [:prices.tax_id					:as :tax_id]
+			     [:currencies.iso_code				:as :currency_iso_code]
+			     [:prices.currency_id				:as :currency_id]]
+	  prices-table (table "prices prices")
+	  currencies (table "currencies currencies")
+	  taxes (table "taxes taxes")
+	  prices (-> prices-table
+		     (outer-join currencies :left (where (= :prices.currency_id :currencies.id)))
+		     (outer-join taxes :left (where (= :prices.tax_id :taxes.id)))
+		     (project prices-projection))
+	  products-with-skus-and-prices (-> products-with-variants
+					    (join product-variant-prices-table (where (= :product_variants.id :product_variant_prices.product_variant_id)))
+					    (join price-lists-table (where (= :price_lists.id :product_variant_prices.price_list_id)))
+					    (join prices (where (= :prices.id :product_variant_prices.price_id)))
+					    (join product-variant-skus-table (where (= :product_variants.id :product_variant_skus.product_variant_id)))
+					    (join skus-table (where (= :product_variant_skus.sku_id :skus.id))))
+	  alt-prices-projection [[:alt_prices.id				:as :alt_price_id]
+				 [:alt_prices.pence				:as :alt_price_pence]
+				 [:alt_prices.tax_percent			:as :alt_price_tax_percent]
+				 [:alt_taxes.name				:as :alt_tax_name]
+				 [:alt_prices.tax_id				:as :alt_tax_id]
+				 [:alt_currencies.iso_code			:as :alt_currency_iso_code]
+				 [:alt_prices.currency_id			:as :alt_currency_id]]
+	  alt-prices-table (table "prices AS alt_prices")
+	  alt-currencies (table "currencies AS alt_currencies")
+	  alt-taxes (table "taxes AS alt_taxes")
+	  alt-prices (-> alt-prices-table
+			 (outer-join alt-currencies :left (where (= :alt_prices.currency_id :alt_currencies.id)))
+			 (outer-join alt-taxes :left (where (= :alt_prices.tax_id :alt_taxes.id)))
+			 (project alt-prices-projection))
+	  supplier-products-table (project (table :supplier_products)
+					   [[:id				:as :supplier_product__id]
+					    [:supplier_id			:as :supplier_product__supplier_id]
+					    [:sku_id				:as :supplier_product__sku_id]
+					    [:supplier_product_code		:as :supplier_product__supplier_product_code]
+					    [:logistic_unit_handle		:as :supplier_product__logistic_unit_handle]
+					    [:logistic_unit_quantity		:as :supplier_product__logistic_unit_quantity]
+					    [:name				:as :supplier_product__name]
+					    [:price_id				:as :supplier_product__price_id]
+					    [:status				:as :supplier_product__status]])
+	  suppliers-table (project (table :suppliers)
+				   [[:id					:as :supplier__id]
+				    [:name					:as :supplier__name]
+				    [:email					:as :supplier__email]
+				    [:phone					:as :supplier__phone]
+				    [:contact_name				:as :supplier__contact_name]
+				    [:currency_id				:as :supplier__currency_id]])
+	  suppliers-supplier-products-and-prices (-> supplier-products-table
+						     (outer-join suppliers-table :left (where (= :supplier_products.supplier_id :suppliers.id)))
+						     (outer-join alt-prices :left (where (= :alt_prices.id :supplier_products.price_id))))
+	  products-list (join products-with-skus-and-prices suppliers-supplier-products-and-prices (where (= :skus.id :supplier_products.sku_id)))]
       (are [x y] (= (-> x (compile nil) interpolate-sql (.replaceAll "SELECT .* FROM" "SELECT * FROM")) y)
 	   open-orders-with-skus-query
 	   (str "SELECT * FROM orders "
@@ -379,28 +494,36 @@
 		"JOIN product_variant_skus ON (product_variants.id = product_variant_skus.product_variant_id) "
 		"JOIN skus ON (skus.id = product_variant_skus.sku_id) "
 		"JOIN products ON (products.id = product_variants.product_id) "
-		"WHERE (orders.status = 1)"))))
+		"WHERE (orders.status = 1)")
+	   skus-being-picked-query
+	   (str "SELECT * FROM shipment_lines "
+		"JOIN order_lines ON (shipment_lines.order_line_id = order_lines.id) "
+		"JOIN product_variant_skus ON (product_variant_skus.product_variant_id = order_lines.product_variant_id) "
+		"JOIN order_lines alt_order_lines ON (alt_order_lines.product_variant_id = product_variant_skus.product_variant_id) "
+		"JOIN shipment_lines alt_shipment_lines ON (alt_order_lines.id = alt_shipment_lines.order_line_id) "
+		"WHERE ((shipment_lines.id = 1) AND (alt_shipment_lines.status = PICKED))")))
+    )
 
   (testing "update!"
     (expect [update-vals (has-args [:users ["(id = ?)" 1] {:name "Bob"}])
              find-connection (returns true)]
-      (update! (table :users) (where (= :id 1)) {:name "Bob"}))
+	    (update! (table :users) (where (= :id 1)) {:name "Bob"}))
     (expect [update-vals (has-args [:users ["(salary IS NULL)"] {:salary 1000}])
              find-connection (returns true)]
-      (update! (table :users) (where (= :salary nil)) {:salary 1000})))
+	    (update! (table :users) (where (= :salary nil)) {:salary 1000})))
 
   (testing "update-in!"
     (expect [update-or-insert-vals (has-args [:users ["(id = ?)" 1] {:name "Bob"}])
              find-connection (returns true)]
-      (update-in! (table :users) (where (= :id 1)) {:name "Bob"}))
+	    (update-in! (table :users) (where (= :id 1)) {:name "Bob"}))
     (expect [update-or-insert-vals (has-args [:users ["(salary IS NULL)"] {:salary 1000}])
              find-connection (returns true)]
-      (update-in! (table :users) (where (= :salary nil)) {:salary 1000})))
+	    (update-in! (table :users) (where (= :salary nil)) {:salary 1000})))
 
   (testing "difference"
     (are [x y] (= (-> x (compile nil) interpolate-sql) y)
          (difference (select (table :users) (where (>= :id 0)))
-                (select (table :users) (where (= :id 1))))
+		     (select (table :users) (where (= :id 1))))
          "(SELECT users.* FROM users WHERE (users.id >= 0)) EXCEPT (SELECT users.* FROM users WHERE (users.id = 1))"
          (-> (select (table :users) (where (>= :id 0)))
              (difference (select (table :users) (where (= :id 1))))
@@ -414,7 +537,7 @@
   (testing "intersection"
     (are [x y] (= (-> x (compile nil) interpolate-sql) y)
          (intersection (select (table :users) (where (>= :id 0)))
-                (select (table :users) (where (= :id 1))))
+		       (select (table :users) (where (= :id 1))))
          "(SELECT users.* FROM users WHERE (users.id >= 0)) INTERSECT (SELECT users.* FROM users WHERE (users.id = 1))"
          (-> (select (table :users) (where (>= :id 0)))
              (intersection (select (table :users) (where (= :id 1))))
@@ -479,7 +602,7 @@
              (take 5)
              (sort [:wage]))
          "SELECT * FROM (SELECT t1.* FROM t1 ORDER BY t1.id ASC LIMIT 5 OFFSET 10) ORDER BY wage ASC"))
-  ;TODO: Last two examples should not qualify wage?
+					;TODO: Last two examples should not qualify wage?
 
   (testing "combinations with sort/limit"
     (are [x y] (= (-> x (compile nil) interpolate-sql) y)

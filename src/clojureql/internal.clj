@@ -486,7 +486,7 @@
   [tna]
   (if (map? tna)
     (subselect-table-alias (:tname tna))
-    (let [[table-name alias] (split tna #"\s+")]
+    (let [[table-name alias] (->> (split tna #"\s+") (remove #(.equalsIgnoreCase "as" %)))]
       (or alias table-name))))
 
 (defn joins-by-table-alias
